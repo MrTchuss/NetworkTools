@@ -1,0 +1,200 @@
+#!/bin/bash
+# dlCiscoCfg - download Cisco config on a TFTP server
+# Copyright (C) 2012 - Nicolas Biscos (buffer at 0x90 period fr)
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY# without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# This should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+#####################################
+# Application used in this too      #
+#####################################
+# Application used in this tool
+tftpd=in.tftpd
+ifdata=ifdata
+snmpset=snmpset
+
+#####################################
+# Default values                    #
+#####################################
+waitTime=20
+snmpVersion=1
+community=private
+iface=eth0
+rawFileName=/srv/tftp/switch-config.txt
+dotftp=1
+
+#####################################
+# Check that all needed application #
+# are installed                     #
+#####################################
+function doCheck()
+{
+   local notfound=0
+   for app in $tftpd $ifdata $snmpset
+   do
+      command -v $app >/dev/null 2>&1 ||
+         { echo >&2 "Please install $app first... Aborting.";
+         notfound=$(($notfound+1)); }
+   done
+   
+   if [ 0 -ne $notfound ];
+   then
+      exit -1
+   fi
+}
+
+#####################################
+# Print help and exit               #
+#####################################
+function doHelp()
+{
+   cat <<EOF
+dlCiscoCfg
+   Tool to remotly download Cisco configuration.
+   The configuration is uploaded by TFTP (as a consequence, a HPA TFTP server must be available on the system)
+   The TFTP server is automatically launched, unless -n option is used
+
+Syntax: dlCiscoCfg [-h] [-i iface] [-t tftpserver] [-v snmpVersion] [-c communityString] [-o fileName] ip1 [ip2 ...]
+   -h                 Show this help messqge and exit
+   -i interface       Interface on which the TFTP server will be listening
+   -t tftpServer      Do not start a local tftp server. Use this one instead.
+   -v snmpVersion     SNMP protocol version to use. Can be 1 or 2c. Defaulting to 1
+   -c communityString RW Community string to use. Defaulting to private
+   -o fileName        absolute file name. By default, it will be uploaded to /srv/tftp/switch-config.txt
+   ip1 ip2..          IP address of the Cisco switches/routers
+
+EOF
+   exit -1
+}
+
+#####################################
+# Check that current user can run   #
+# the tool                          #
+#####################################
+function checkUser()
+{
+   local user=$1
+   if [ $user != $(whoami) ];
+   then
+      echo -E- Must be $user to run this command
+      exit -1
+   fi
+}
+
+#####################################
+# Start TFTP server on the interface#
+# given in command line             #
+#####################################
+function startTFTP()
+{
+   local directory
+   # Start tftpd
+   # Check that the interface is alive
+   tftpServer=$(ifdata -pa $iface)
+   if [ "NON-IP" == "$tftpServer" ];
+   then
+      echo -E- Interface $iface is not active.
+      exit -1
+   fi
+   directory=$(dirname $rawFileName)
+
+   echo -I- Starting tftpd server on $tftpServer. Results will be stored in $directory.
+   in.tftpd -l -c -s $directory
+}
+
+#####################################
+# Stop TFTP server                  #
+# It seems that even after the end  #
+# of snmpset, CISCO still sends     #
+# data, so we wait for it to end    #
+#####################################
+function stopTFTP()
+{
+   # must wait 30 seconds to the config to be fully uploaded
+   echo -I- Stopping tftp server after $waitTime secs.
+   sleep $waitTime
+   pkill -9 in.tftpd
+}
+
+#####################################
+# Perform the Dl using snmpset      #
+#####################################
+function dlCfg()
+{
+   target=$1
+   filename=$(basename $rawFileName)_$target
+   # retrieve configuration
+   echo -I- Retrieve $target configuration in $filename.
+   echo -I- SNMP Version: $snmpVersion
+   echo -I- Community: $community
+   snmpset -v $snmpVersion -c $community $target .1.3.6.1.4.1.9.2.1.55.$tftpServer s $filename
+}
+
+#####################################
+# Parse command line arguments      #
+#####################################
+TEMP=`getopt -o c:v:o:i:h -n 'getCiscoConfig' -- "$@"`
+
+if [ 0 != $? ] ;
+then
+   echo "Unknown error... Terminating..." >&2
+   exit 1
+fi
+
+# Parse arguments
+eval set -- "$TEMP"
+
+while true ;
+do
+   case "$1" in
+         -h) doHelp ;;
+         -i) iface=$2 ; shift 2 ;;
+         -n) dotftp=0; tftpServer=$2 ; shift 2 ;;
+         -v) snmpVersion=$2 ; shift 2 ;;
+         -c) community=$2 ; shift 2 ;;
+         -o) rawFileName=$2 ; shift 2 ;;
+         --) shift ; break ;;
+         *) echo "Internal error!" ; exit 1 ;;
+    esac
+done
+
+if [ 0 -eq $# ];
+then
+   echo -E- At least one IP is required
+   exit -1
+fi
+
+#####################################
+# Go, go, go !                      #
+#####################################
+checkUser root
+doCheck
+if [ $dotftp -ne 0 ];
+then
+   startTFTP
+fi
+
+echo $#
+while [ 0 -ne $# ];
+do
+   dlCfg $1
+   shift 
+done
+   
+# Stop tftpd
+if [ 0 -ne $dotftp ];
+then
+   stopTFTP
+fi
+
