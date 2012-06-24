@@ -15,6 +15,13 @@
 # This should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+#OID as in http://www.cisco.com/en/US/tech/tk648/tk362/technologies_tech_note09186a008009463e.shtml
+writeNetOID=.1.3.6.1.4.1.9.2.1.55
+hostConfigSetOID=.1.3.6.1.4.1.9.2.1.53
+writeMemOID=.1.3.6.1.4.1.9.2.1.54
+flashToNetOID=.1.3.6.1.4.1.9.2.10.9
+flashEraseOID=.1.3.6.1.4.1.9.2.10.6
+netToFlashOID=.1.3.6.1.4.1.9.2.10.12
 
 #####################################
 # Application used in this too      #
@@ -101,7 +108,7 @@ function startTFTP()
    local directory
    # Start tftpd
    # Check that the interface is alive
-   tftpServer=$(ifdata -pa $iface)
+   tftpServer=$($ifdata -pa $iface)
    if [ "NON-IP" == "$tftpServer" ];
    then
       echo -E- Interface $iface is not active.
@@ -110,7 +117,7 @@ function startTFTP()
    directory=$(dirname $rawFileName)
 
    echo -I- Starting tftpd server on $tftpServer. Results will be stored in $directory.
-   in.tftpd -l -c -s $directory
+   $tftpd -l -c -s $directory
 }
 
 #####################################
@@ -122,9 +129,10 @@ function startTFTP()
 function stopTFTP()
 {
    # must wait 30 seconds to the config to be fully uploaded
-   echo -I- Stopping tftp server after $waitTime secs.
-   sleep $waitTime
-   pkill -9 in.tftpd
+   #echo -I- Stopping tftp server after $waitTime secs.
+   #sleep $waitTime
+   echo -I- Stopping tftp server.
+   pkill -9 $tftpd
 }
 
 #####################################
@@ -138,7 +146,7 @@ function dlCfg()
    echo -I- Retrieve $target configuration in $filename.
    echo -I- SNMP Version: $snmpVersion
    echo -I- Community: $community
-   snmpset -v $snmpVersion -c $community $target .1.3.6.1.4.1.9.2.1.55.$tftpServer s $filename
+   $snmpset -t $waitTime -v $snmpVersion -c $community $target ${writeNetOID}.$tftpServer s $filename
 }
 
 #####################################

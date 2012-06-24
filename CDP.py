@@ -123,19 +123,19 @@ if( '__main__' == __name__ ):
    p = sniff(lfilter=lambda x:x.haslayer(CDP), count=1)[0]
    for tlv in p[CDP].infos:
       if tlv.type == 10:
-         print 'VLAN %d' % (unpack('>h', tlv.content)[0]);
+         print 'VLAN %d' % (unpack('!H', tlv.content)[0]);
       elif tlv.type == 3:
          print 'Port: %s' % tlv.content
       elif tlv.type == 1:
          print 'DeviceID: %s' % tlv.content
       elif tlv.type == 0x16:
-         addrCount = unpack('>I', tlv.content[0:4])[0]
+         addrCount = unpack('!I', tlv.content[0:4])[0]
          raw = tlv.content[4:]
          for i in range(addrCount):
-            addrLen = unpack('>h', raw[3:5])[0]
+            addrLen = unpack('!H', raw[3:5])[0]
             addr = []
             for addrByteIdx in range(addrLen):
-               addr.append(unpack('>b', raw[5+addrByteIdx:5+addrByteIdx+1])[0])
+               addr.append(unpack('!B', raw[5+addrByteIdx:5+addrByteIdx+1])[0])
             print 'Management Address: %s' % ('.'.join([str(x) for x in addr]))
             raw = raw[5+addrLen:]
 
