@@ -3,7 +3,6 @@
 # dhcp_discover.py - script to get DHCP parameter                            #
 # Based on work by Matt, available at                                        #
 # http://www.attackvector.org/network-discovery-via-dhcp-using-python-scapy/ #
-# by Matt                                                                    #
 # Updates May 2012 - Nicolas Biscos (buffer at 0x90 period fr )              #
 #                                                                            #
 # This program is free software: you can redistribute it and/or modify       #
@@ -21,6 +20,9 @@
 ##############################################################################
 
 import sys
+# Suppress scapy complaints
+import logging
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
 from getopt import getopt;
 from getopt import GetoptError;
