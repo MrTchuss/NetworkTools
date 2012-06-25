@@ -1,13 +1,24 @@
 #!/usr/bin/env python
-
-##############################################
-# Nicolas Biscos - 20 May 12                 #
-#                                            #
-# Perform a dictionary-based SNMP community  #
-# brute-force. This can be use as a lib for  # 
-# get/set SNMP values                        #
-#                                            #
-##############################################
+##############################################################################
+# snmp_login.py - scapy script to discover SNMP communities                  #
+# 20 May 2012 - Nicolas Biscos (buffer at 0x90 period fr )                   #
+#                                                                            #
+# Perform a dictionary-based SNMP community brute-force. This can be use as  #
+# a lib for get/set SNMP values                                              #
+#                                                                            #
+# This program is free software: you can redistribute it and/or modify       #
+# it under the terms of the GNU General Public License as published by       #
+# the Free Software Foundation, either version 3 of the License, or          #
+# (at your option) any later version.                                        #
+#                                                                            #
+# This program is distributed in the hope that it will be useful,            #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of             #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the               #
+# GNU General Public License for more details.                               #
+#                                                                            #
+# This should have received a copy of the GNU General Public License         #
+# along with this program. If not, see <http://www.gnu.org/licenses/>.       #
+##############################################################################
 
 """
 TODO List:
@@ -17,30 +28,21 @@ TODO List:
    * Implement get-next support for v2c
 """
 
+# Suppress scapy complaints
+import logging
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
 import string, random
-from getopt import getopt;
+from getopt import getopt
+from getopt import GetoptError
 import threading
 
 versionOid = '.1.3.6.1.2.1.1.1.0'
 nameOid = '.1.3.6.1.2.1.1.5.0'
 
-class SR(threading.Thread):
-   def __init__(self, packet, timeout):
-      threading.Thread.__init__(self);
-      self.packet = packet;
-      self.timeout = timeout;
-      self.ans =None
-
-   def getAns(self):
-      return self.ans;
-
-   def start(self):
-      self.ans = sr1(self.packet, timeout=self.timeout);
-      
-   def stop(self):
-      pass
-
+"""
+Class to handle SNMP Get/Set request
+"""
 class snmp:
    version = 0
    dport = 161
@@ -66,20 +68,41 @@ class snmp:
       if( None != timeout ):
          self.timeout = timeout;
 
+   """
+   Generates a randome community name
+   @return a random 8-bytes string
+   """
    def randomCommunity(self):
          self.community = ''.join([random.choice(string.ascii_uppercase) for x in range(8)])
 
+   """
+   Generates a random non-privileged port number
+   @return a non privileged port number
+   """
    def randomSport(self):
       self.sport = RandInt()
       self.sport.max = 65535
       self.sport.min = 1024
    
+   """
+   Returns error count
+   @return error count
+   """
    def error(self):
       return self.__error;
 
+   """
+   Returns response string
+   @return response string 
+   """
    def response(self):
       return self.__response;
 
+   """
+   Perform a get/set request. The get/set trigger is the pdu format
+   @param pdu SNMP pdu. Do a key/value to trig a set condition
+   @return False if no answer received, else True
+   """
    def __getset(self, pdu):
       if( None == self.sport ):
          self.randomSport();
@@ -91,9 +114,6 @@ class snmp:
       packet[SNMP].PDU = pdu
       verb = conf.verb;
       conf.verb = 0
-      #sender = SR(packet, self.timeout)
-      #sender.run()
-      #ans = sender.getAns()
       ans = sr1(packet, timeout=self.timeout)
       conf.verb = verb
       if( None == ans ):
@@ -110,22 +130,39 @@ class snmp:
             self.__response = "";
       return True;
  
+   """
+   Send/receive a SNMP Get
+   @param oid OID to use
+   @return False if no answer received, else True
+   """
    def get(self, oid):
       pdu = SNMPget(varbindlist=SNMPvarbind(oid=oid));
       return self.__getset(pdu)
       
+   """
+   Send/receive a SNMP Set
+   @param oid OID to use
+   @param value value to set
+   @return False if no answer received, else True
+   """
    def set(self, oid, value):
       pdu = SNMPset(varbindlist=SNMPvarbind(oid=oid, value=value))
       return self.__getset(pdu)
 
 def doHelp():
    print 'Sorry, no help implemented yet ...'
-if( "__main__" == __name__ ):
+
+def parseArgs():
    communityList = ['public', 'private']
    output        = sys.stdout;
    stopOnFirst   = False
    versionList   = [0, 1]
-   opts, targetList = getopt(sys.argv[1:], 'c:C:d:s:o:v:fh', ['community=', 'communityFile=', 'dport=', 'sport=', 'output=', 'help']);
+   dport = 161
+   sport = None
+   try:
+      opts, targetList = getopt(sys.argv[1:], 'c:C:d:s:o:v:fh', ['community=', 'communityFile=', 'dport=', 'sport=', 'output=', 'help']);
+   except GetoptError, e:
+      print '-E- %s' % str(e);
   
    for k, v in opts:
       if( '-c' == k or '--community' == k ):
@@ -150,7 +187,11 @@ if( "__main__" == __name__ ):
          stopOnFirst = True;
       elif( '-h' == k or '--help' == k ):
          doHelp();
+         sys.exit(0)
+   return communityList, output, stopOnFirst, dport, sport, versionList
 
+if( "__main__" == __name__ ):
+  communityList, output, stopOnFirst, dport, sport, versionList =  parseArgs()
    snmp = snmp()
    found = {}
    done = False
@@ -189,3 +230,4 @@ if( "__main__" == __name__ ):
                   print '[+] Community %s for %s is RO' % (community, dst);
             else:
                print '[!] Something went wrong...'
+
