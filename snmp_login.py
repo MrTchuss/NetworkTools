@@ -47,7 +47,7 @@ Class to handle SNMP Get/Set request
 class Snmp:
    version = 0
    dport = 161
-   timeout = 0.01
+   timeout = 0.5
    dst = '127.0.0.1'
    __error = 0
    __response = ''
@@ -151,13 +151,11 @@ class Snmp:
       return self.__getset(pdu)
 
 class Worker(Thread):
-   def __init__(self, queue, results, lock):
+   def __init__(self, queue):
       Thread.__init__(self);
       self.__queue = queue;
       self.daemon = True;
       self.__doStop = False;
-      self.__results = results;
-      self.__lock = lock;
 
    def setFunction(self, function):
       if( 'checkCommunityString' == function ):
@@ -165,9 +163,18 @@ class Worker(Thread):
       elif( 'checkCommunityType' == function ):
          self.__function = self.checkCommunityType;
 
+   def setLock(self, lock):
+      self.__lock = lock;
+
+   def setResults(self, results):
+      self.__results = results;
+
    def checkCommunityString(self, snmp):
       if( snmp.get(versionOid) and 0 == snmp.error() ):
-         print '[+] Community %s for %s: "%s"' % (snmp.community, snmp.dst, snmp.response());
+         version = '1'
+         if snmp.version == 1:
+            version = '2c'
+         print '[+] Community %s, version %s, for %s: "%s"' % (snmp.community, version, snmp.dst, snmp.response());
          self.__lock.acquire()
          self.__results.add(snmp.dst, snmp.version, snmp.community);
          self.__lock.release()
@@ -176,14 +183,18 @@ class Worker(Thread):
       if( snmp.get(nameOid) and not snmp.error() ):
          name = snmp.response();
          if( snmp.set(nameOid, name) ):
+            version = '1'
+            if snmp.version == 1:
+               version = '2c'
             if( not snmp.error() ):
-               print '[+] Community %s for %s is RW' % (community, dst);
+               access = 'RW';
                #self.lock.acquire()
                #self.lock.release()
             else:
-               print '[+] Community %s for %s is RO' % (community, dst);
+               access = 'RO';
                #self.lock.acquire()
                #self.lock.release()
+            print '[+] Community %s, version %s, for %s is %s' % (community, version, dst, access);
          else:
             print '[!] Something went wrong...'
 
@@ -193,20 +204,15 @@ class Worker(Thread):
          snmp = self.__queue.get()
          self.__function(snmp)
          self.__queue.task_done()
-      print '-I- Ending worker'
 
    def stop(self):
       self.__doStop = True;
 
-class SnmpResult:
-   def __init__(self, snmpVersion, communityName, accessType=None):
-      self.snmpVersion = snmpVersion;
-      self.communityName = communityName;
-      self.accessType = accessType;
-
+# The ugly code :p
 class SnmpResults:
    def __init__(self):
-      pass
+      self.__rslt = {};
+
    def add(self, dst, snmpVersion, communityName):
       if( not self.__rslt.has_key(dst) ):
          self.__rslt[dst] = {};
@@ -217,11 +223,46 @@ class SnmpResults:
    def set(self, dst, snmpVersion, communityName, accessType):
       pass
 
-   def get(self, dst):
-      pass
-
    def __iter__(self):
-      pass
+      return SnmpResultsIter(self.__rslt);
+
+# The ugliest code ever :p
+class SnmpResultsIter:
+   def __init__(self, rslt):
+      self.rslt = rslt;
+      self.done = False
+      self.start =True;
+   def next(self):
+      if self.done : 
+         raise StopIteration
+      elif self.start:
+         self.itr = self.rslt.__iter__();
+         self.dst = self.itr.next()
+         self.cItr = self.rslt[self.dst].__iter__();
+         self.community = self.cItr.next();
+         self.vItr = self.rslt[self.dst][self.community].__iter__()
+         self.start = False
+      try:
+         self.version = self.vItr.next();
+      except StopIteration:
+         try:
+            self.community = self.cItr.next();
+            try:
+               self.vItr = self.rslt[self.dst][self.community].__iter__();
+               self.version = self.vItr.next();
+            except Exception, e:
+               print 'Something went wrong (%s)...' % str(e)
+         except StopIteration:
+            try:
+               self.itr.next()
+            except StopIteration:
+               self.done = True;
+            self.dst = self.itr.next()
+            self.cItr = self.rslt[self.dst].__iter__();
+            self.community = self.cItr.next();
+            self.vItr = self.rslt[self.dst][self.community].__iter__()
+            self.version = self.vItr.next()
+      return self.dst, self.community, self.version;
 
 def doHelp():
    print 'Sorry, no help implemented yet ...'
@@ -265,15 +306,17 @@ def parseArgs():
    return targetList, communityList, output, stopOnFirst, dport, sport, versionList
 
 if( "__main__" == __name__ ):
-   workersCount=5
+   workersCount=30
    targetList, communityList, output, stopOnFirst, dport, sport, versionList =  parseArgs()
-   found = {}
    q = Queue()
    workerList = []
    lock = Lock();
+   results = SnmpResults()
    for worker in range(workersCount):
       worker = Worker(q);
       worker.setFunction("checkCommunityString")
+      worker.setResults(results);
+      worker.setLock(lock);
       workerList.append(worker);
       worker.start();
    for community in communityList:
@@ -288,9 +331,28 @@ if( "__main__" == __name__ ):
             q.put(snmp);
    # Wait for workers to end
    q.join();
-   for worker in workerList:
-      worker.stop();
-   
+
+   print ''
+   q = Queue()
+   workerList = []
+   for worker in range(workersCount):
+      worker = Worker(q);
+      worker.setFunction("checkCommunityType")
+      worker.setResults(None);
+      worker.setLock(None);
+      workerList.append(worker);
+      worker.start();
+ 
+   for dst, community, version in results:
+      snmp = Snmp()
+      snmp.dport = dport;
+      snmp.sport = sport;
+      snmp.dst = dst;
+      snmp.version = version;
+      snmp.community = community;
+      q.put(snmp);
+   # Wait for workers to end
+   q.join();
 
 
 #if( not found.has_key(dst) ):
