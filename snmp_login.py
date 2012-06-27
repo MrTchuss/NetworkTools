@@ -23,7 +23,6 @@
 """
 TODO List:
    * Implement output file
-   * Implement doHelp function
    * Implement get-next support for v2c
 """
 
@@ -31,7 +30,7 @@ TODO List:
 import logging
 logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
-import string, random
+import string, random, sys, os
 from getopt import getopt
 from getopt import GetoptError
 from threading import Thread
@@ -129,7 +128,8 @@ class Snmp:
             self.__response = ans[SNMP][SNMPresponse][SNMPvarbind].value.val
          else:
             self.__response = "";
-      return True;
+         return True;
+      return False;
  
    """
    Send/receive a SNMP Get
@@ -150,6 +150,13 @@ class Snmp:
       pdu = SNMPset(varbindlist=SNMPvarbind(oid=oid, value=value))
       return self.__getset(pdu)
 
+"""
+This Worker class is an independant Thread that picks up in
+a synchronized queue the SNMP packet to proceed.
+It can be proceed by two different functions (checkCommunityString
+and checkCommunityType, that respectiveley check whether the community
+name exists, and checks if the community name is RO or RW
+"""
 class Worker(Thread):
    def __init__(self, queue):
       Thread.__init__(self);
@@ -157,18 +164,34 @@ class Worker(Thread):
       self.daemon = True;
       self.__doStop = False;
 
+   """
+   Select the SNMP function processing
+   @param function One of checkCommunityString or checkCommunityType
+   """
    def setFunction(self, function):
       if( 'checkCommunityString' == function ):
          self.__function = self.checkCommunityString;
       elif( 'checkCommunityType' == function ):
          self.__function = self.checkCommunityType;
 
+   """
+   Set the shared thread lock
+   @param lock lock object
+   """
    def setLock(self, lock):
       self.__lock = lock;
 
+   """
+   Set the shared SNMPResults object
+   @param results the SNMPResults object
+   """
    def setResults(self, results):
       self.__results = results;
 
+   """
+   Check if the SNMP server responds to the SNMP object 
+   @param snmp a prepared snmp packet
+   """
    def checkCommunityString(self, snmp):
       if( snmp.get(versionOid) and 0 == snmp.error() ):
          version = '1'
@@ -179,6 +202,10 @@ class Worker(Thread):
          self.__results.add(snmp.dst, snmp.version, snmp.community);
          self.__lock.release()
 
+   """
+   Check if the SNMP server responds to the SNMP object in RW or RO mode
+   @param snmp a prepared snmp packet
+   """
    def checkCommunityType(self, snmp):
       if( snmp.get(nameOid) and not snmp.error() ):
          name = snmp.response();
@@ -188,16 +215,15 @@ class Worker(Thread):
                version = '2c'
             if( not snmp.error() ):
                access = 'RW';
-               #self.lock.acquire()
-               #self.lock.release()
             else:
                access = 'RO';
-               #self.lock.acquire()
-               #self.lock.release()
             print '[+] Community %s, version %s, for %s is %s' % (community, version, dst, access);
          else:
             print '[!] Something went wrong...'
 
+   """
+   Thread main worker method. Pick up an snmp prepared packed in the Queue and process it
+   """
    def run(self):
       self.__doStop = False;
       while not self.__doStop:
@@ -205,68 +231,85 @@ class Worker(Thread):
          self.__function(snmp)
          self.__queue.task_done()
 
+   """
+   Stop the main worker method. Not sure if it is usefull here...
+   """
    def stop(self):
       self.__doStop = True;
 
-# The ugly code :p
+"""
+Simple container for SNMP check results
+"""
+class SnmpResult:
+   def __init__(self, dst, snmpVersion, communityName):
+      self.dst = dst;
+      self.communityName = communityName;
+      self.snmpVersion = snmpVersion;
+   def get(self):
+      return self.dst, self.communityName, self.snmpVersion;
+
+"""
+Container for multiple SNMP Results. Can be iterated
+"""
 class SnmpResults:
    def __init__(self):
-      self.__rslt = {};
+      self.__rslt = [];
 
    def add(self, dst, snmpVersion, communityName):
-      if( not self.__rslt.has_key(dst) ):
-         self.__rslt[dst] = {};
-      if( not self.__rslt[dst].has_key(communityName) ):
-         self.__rslt[dst][communityName] = []
-      self.__rslt[dst][communityName].append(snmpVersion);
-
-   def set(self, dst, snmpVersion, communityName, accessType):
-      pass
+      snmpResult = SnmpResult(dst, snmpVersion, communityName);
+      self.__rslt.append(snmpResult);
 
    def __iter__(self):
-      return SnmpResultsIter(self.__rslt);
+      self.__iter = self.__rslt.__iter__();
+      return self;
 
-# The ugliest code ever :p
-class SnmpResultsIter:
-   def __init__(self, rslt):
-      self.rslt = rslt;
-      self.done = False
-      self.start =True;
    def next(self):
-      if self.done : 
-         raise StopIteration
-      elif self.start:
-         self.itr = self.rslt.__iter__();
-         self.dst = self.itr.next()
-         self.cItr = self.rslt[self.dst].__iter__();
-         self.community = self.cItr.next();
-         self.vItr = self.rslt[self.dst][self.community].__iter__()
-         self.start = False
-      try:
-         self.version = self.vItr.next();
-      except StopIteration:
-         try:
-            self.community = self.cItr.next();
-            try:
-               self.vItr = self.rslt[self.dst][self.community].__iter__();
-               self.version = self.vItr.next();
-            except Exception, e:
-               print 'Something went wrong (%s)...' % str(e)
-         except StopIteration:
-            try:
-               self.itr.next()
-            except StopIteration:
-               self.done = True;
-            self.dst = self.itr.next()
-            self.cItr = self.rslt[self.dst].__iter__();
-            self.community = self.cItr.next();
-            self.vItr = self.rslt[self.dst][self.community].__iter__()
-            self.version = self.vItr.next()
-      return self.dst, self.community, self.version;
+      snmpResult = self.__iter.next();
+      return snmpResult.get();
 
 def doHelp():
-   print 'Sorry, no help implemented yet ...'
+   # To add when file support will be implemented
+   #Syntax: snmp_login.py [-C communityFileName] [-c communityName] [-d dport] [-s sport] [-o outputFile] [-v snmpVersion] [-w workers] [-t timeout] [-h] target1 [target2 [...]]
+   #   -o outputFileName
+   #   --output             write results in outputFileName
 
+   print """
+Scapy Script to brute force SNMP community names.
+The principle is taken from snmp_login Metasploit module. First, a set of SNMP GET request using versionOID is performed to capture the community names.
+Then, based on the results, these community names are used to read, then write back the nameOID. Based on the response status, the community is marked as RW or RO.
+
+Syntax: snmp_login.py [-C communityFileName] [-c communityName] [-d dport] [-s sport] [-v snmpVersion] [-w workers] [-t timeout] [-h] target1 [target2 [...]]
+
+Common options:
+---------------
+   -C communityFileName
+   --communityFile=     file containing a list of community to test (tip: use fuzzdb one)
+
+   -c communityName
+   --community=         a comma-separated community name list to test (ex: -c private,public,ilmi)
+
+   -d dport
+   --dport              UDP destination port if different from 161
+
+   -v version
+   --version            a comma-separated version list of snmp protocol to test (ex: -v 1,2c)
+
+   -h
+   --help               Display this message and exits
+
+   target               ip to test
+
+Advanced options:
+-----------------
+   --sport=
+   -s sport             UDP source port 
+   -t timeout           timeout (no SNMP response back) USE WITH CAUTION !
+   -w workersCount      number of thread to use
+
+"""
+
+"""
+"""
 def parseArgs():
    communityList = ['public', 'private']
    output        = sys.stdout;
@@ -274,14 +317,24 @@ def parseArgs():
    versionList   = [0, 1]
    dport = 161
    sport = None
+   workersCount=30
+   timeout = 0.5;
+   if( 'posix' != os.name ):
+      print '[!] Only on linux or unix system'
+      sys.exit(-1)
+   if( 0 != os.geteuid() ):
+      print '[!] Must be root'
+      sys.exit(-1);
    try:
-      opts, targetList = getopt(sys.argv[1:], 'c:C:d:s:o:v:fh', ['community=', 'communityFile=', 'dport=', 'sport=', 'output=', 'help']);
+      #opts, targetList = getopt(sys.argv[1:], 'c:C:d:s:o:v:w:h', ['community=', 'communityFile=', 'dport=', 'sport=', 'output=', 'help', 'version=']);
+      opts, targetList = getopt(sys.argv[1:], 'c:C:d:s:v:t:w:h', ['community=', 'communityFile=', 'dport=', 'sport=', 'help', 'version=']);
    except GetoptError, e:
-      print '-E- %s' % str(e);
+      print '[!] %s' % str(e);
+      sys.exit(-1);
   
    for k, v in opts:
       if( '-c' == k or '--community' == k ):
-         communityList = [v];
+         communityList = v.split(',');
       elif( '-C' == k or '--communityFile' == k ):
          if( not os.path.exists(v) ):
             print '%s: no such file or directory' % (v)
@@ -291,24 +344,42 @@ def parseArgs():
          dport = int(v);
       elif( '-s' == k or '--sport' == k ):
          sport = int(v)
-      elif( '-o' == k or '--output' == k ):
-         if( os.path.exists(v) ):
-            print '%s: file exists. Please use a different file name.' % (v)
-            sys.exit(-1);
-         output = open(v, 'w');
+      #elif( '-o' == k or '--output' == k ):
+      #   if( os.path.exists(v) ):
+      #      print '%s: file exists. Please use a different file name.' % (v)
+      #      sys.exit(-1);
+      #   output = open(v, 'w');
       elif( '-v' == k or '--version' == k ):
-         versionList = [int(x) for x in v.split(',')];
-      elif( '-f' == k ):
-         stopOnFirst = True;
+         for version in v.split(','):
+            if '1' == version:
+               versionList.append(0);
+            elif '2c' == version or '2C' == version:
+               versionList.append(1);
+            else:
+               print '[!] Unknown version %s' % (version)
+               sys.exit(-1);
+      elif( '-t' == k ):
+         timeout = float(v);
+      elif( '-w' == k ):
+         workersCount = int(v);
       elif( '-h' == k or '--help' == k ):
          doHelp();
          sys.exit(0)
-   return targetList, communityList, output, stopOnFirst, dport, sport, versionList
+
+   if( 0 == len(targetList) ):
+      print '[!] Must define at least one target'
+      sys.exit(-1);
+   
+   return targetList, communityList, output, stopOnFirst, dport, sport, versionList, workersCount, timeout;
 
 if( "__main__" == __name__ ):
-   workersCount=30
-   targetList, communityList, output, stopOnFirst, dport, sport, versionList =  parseArgs()
+   # Retrieve arguments from command line
+   targetList, communityList, output, stopOnFirst, dport, sport, versionList, workersCount, timeout =  parseArgs()
+
+   # Creates the sync Queues
    q = Queue()
+
+   # Creates a list of workerss
    workerList = []
    lock = Lock();
    results = SnmpResults()
@@ -319,19 +390,27 @@ if( "__main__" == __name__ ):
       worker.setLock(lock);
       workerList.append(worker);
       worker.start();
+
+   # Fills the synchronized queue with SNMP prepared packets
    for community in communityList:
       for dst in targetList:
          for version in versionList:
             snmp = Snmp()
             snmp.dport = dport;
             snmp.sport = sport;
+            snmp.timeout=timeout
             snmp.dst = dst;
             snmp.version = version;
             snmp.community = community;
             q.put(snmp);
    # Wait for workers to end
    q.join();
+   
+   # Not sure if it is useful, but stops the workers
+   for worker in workerList:
+      worker.stop();
 
+   # Initialize new workers for more community type-check work
    print ''
    q = Queue()
    workerList = []
@@ -343,10 +422,12 @@ if( "__main__" == __name__ ):
       workerList.append(worker);
       worker.start();
  
+   # Retrieve previously discovered snmp communities and check their types
    for dst, community, version in results:
       snmp = Snmp()
       snmp.dport = dport;
       snmp.sport = sport;
+      snmp.timeout=timeout
       snmp.dst = dst;
       snmp.version = version;
       snmp.community = community;
@@ -354,28 +435,8 @@ if( "__main__" == __name__ ):
    # Wait for workers to end
    q.join();
 
+   # Not sure if it is useful, but stops the workers
+   for worker in workerList:
+      worker.stop();
 
-#if( not found.has_key(dst) ):
-#    found[dst] = []
-#if( not community in found[dst] ):
-#   found[dst].append((version, community))
-#if( stopOnFirst ):
-#   done = True
-#break; # do not test further version
-   
-#   for dst, communityTupleList in found.items():
-#      snmp.dst = dst;
-#      # test write
-#      for  version, community in communityTupleList:
-#         snmp.community = community
-#         snmp.version = version
-#         if( snmp.get(nameOid) and not snmp.error() ):
-#            name = snmp.response();
-#            if( snmp.set(nameOid, name) ):
-#               if( not snmp.error() ):
-#                  print '[+] Community %s for %s is RW' % (community, dst);
-#               else:
-#                  print '[+] Community %s for %s is RO' % (community, dst);
-#            else:
-#               print '[!] Something went wrong...'
 
