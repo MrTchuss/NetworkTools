@@ -1,13 +1,23 @@
 #!/usr/bin/env python
 
-##############################################
-# Nicolas Biscos - 18 Apr 12                 #
-#                                            #
-# Scapy dissector for CDP                    #
-# Implements a listener that shows crucial   #
-# infos.                                     #
-#                                            #
-##############################################
+##############################################################################
+# CDP.py - A CDP dissector for Scapy                                         #
+# Used as a script, listens for CDP packets and display informations         #
+# 18 Apr 12 Nicolas Biscos (buffer at 0x90 period fr )                       #
+#                                                                            #
+# This program is free software: you can redistribute it and/or modify       #
+# it under the terms of the GNU General Public License as published by       #
+# the Free Software Foundation, either version 3 of the License, or          #
+# (at your option) any later version.                                        #
+#                                                                            #
+# This program is distributed in the hope that it will be useful,            #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of             #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the               #
+# GNU General Public License for more details.                               #
+#                                                                            #
+# This should have received a copy of the GNU General Public License         #
+# along with this program. If not, see <http://www.gnu.org/licenses/>.       #
+##############################################################################
 
 """
 TODO List:
