@@ -1,22 +1,37 @@
 #!/usr/bin/env python
 
-##############################################
-# Nicolas Biscos - 18 Apr 12                 #
-#                                            #
-# Scapy dissector for CDP                    #
-# Implements a listener that shows crucial   #
-# infos.                                     #
-#                                            #
-##############################################
+##############################################################################
+# CDP.py - A CDP dissector for Scapy                                         #
+# Used as a script, listens for CDP packets and display informations         #
+# 18 Apr 12 Nicolas Biscos (buffer at 0x90 period fr )                       #
+#                                                                            #
+# This program is free software: you can redistribute it and/or modify       #
+# it under the terms of the GNU General Public License as published by       #
+# the Free Software Foundation, either version 3 of the License, or          #
+# (at your option) any later version.                                        #
+#                                                                            #
+# This program is distributed in the hope that it will be useful,            #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of             #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the               #
+# GNU General Public License for more details.                               #
+#                                                                            #
+# This should have received a copy of the GNU General Public License         #
+# along with this program. If not, see <http://www.gnu.org/licenses/>.       #
+##############################################################################
 
 """
 TODO List:
    * Implement specific dissectors for some TLV (e.g managment address, native VLAN, capability, etc.)
 """
  
+# Suppress scapy complaints
+import logging
+logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
 from binascii import hexlify
 from struct import unpack
+from getopt import getopt
+from getopt import GetoptError
 
 #class CDPFieldLenField(FieldLenField):
 #   def m2i(self, pkt, s):
@@ -119,25 +134,72 @@ bind_layers(SNAP, CDP, code=0x2000, OUI=0x00000C);
 bind_layers(HDLC, CDP, control=0x2000);
 bind_layers(PPP, CDP, proto=0x0207);
 
+class CDPMain:
+   def __init__(self):
+      self.timeout=60;
+
+   def doHelp(self):
+      print """
+CDP.py - Capture and dispay Cisco Discovery Protocol information
+
+Syntax: ./CDP.py [-i iface]  [-t timeout] [-h]
+
+   -h          Display this message and exits
+   -i iface    interface to listen on
+   -t timeout  listen for maximum timeout secs
+
+"""
+
+   def parseArgs(self):
+      try:
+         opts, garbage = getopt(sys.argv[1:], 't:i:h', ['timeout=', 'iface=', 'help']);
+      except GetoptError, e:
+         print '[!] %s' % str(e);
+         sys.exit(-1);
+      for k, v in opts:
+         if( '-i' == k or '--iface' == k ):
+            conf.iface = v;
+         elif( '-t' == k or '--timeout' == k ):
+            self.timeout=float(v);
+         elif( '-h' == k or '--help' == k ):
+            self.doHelp();
+            sys.exit(0);
+      if( 0 != len(garbage) ):
+         print '[!] No options required';
+         sys.exit(-1);
+         
+   def parse(self, p):
+      for tlv in p[CDP].infos:
+         if tlv.type == 10:
+            print 'VLAN %d' % (unpack('!H', tlv.content)[0]);
+         elif tlv.type == 3:
+            print 'Port: %s' % tlv.content
+         elif tlv.type == 1:
+            print 'DeviceID: %s' % tlv.content
+         elif tlv.type == 0x16:
+            addrCount = unpack('!I', tlv.content[0:4])[0]
+            raw = tlv.content[4:]
+            for i in range(addrCount):
+               addrLen = unpack('!H', raw[3:5])[0]
+               addr = []
+               for addrByteIdx in range(addrLen):
+                  addr.append(unpack('!B', raw[5+addrByteIdx:5+addrByteIdx+1])[0])
+               print 'Management Address: %s' % ('.'.join([str(x) for x in addr]))
+               raw = raw[5+addrLen:]
+
+   def run(self):
+      self.parseArgs();
+      if( 'posix' != os.name ):
+         print '[!] Sorry, must run on Linux/Unix';
+         sys.exit(-1);
+      if( 0 != os.geteuid() ):
+         print '[!] Must be root to run this script';
+         sys.exit(-1);
+      sniff(lfilter=lambda x:x.haslayer(CDP), count=1, timeout=self.timeout, prn=self.parse);
+
 if( '__main__' == __name__ ):
-   p = sniff(lfilter=lambda x:x.haslayer(CDP), count=1)[0]
-   for tlv in p[CDP].infos:
-      if tlv.type == 10:
-         print 'VLAN %d' % (unpack('!H', tlv.content)[0]);
-      elif tlv.type == 3:
-         print 'Port: %s' % tlv.content
-      elif tlv.type == 1:
-         print 'DeviceID: %s' % tlv.content
-      elif tlv.type == 0x16:
-         addrCount = unpack('!I', tlv.content[0:4])[0]
-         raw = tlv.content[4:]
-         for i in range(addrCount):
-            addrLen = unpack('!H', raw[3:5])[0]
-            addr = []
-            for addrByteIdx in range(addrLen):
-               addr.append(unpack('!B', raw[5+addrByteIdx:5+addrByteIdx+1])[0])
-            print 'Management Address: %s' % ('.'.join([str(x) for x in addr]))
-            raw = raw[5+addrLen:]
+   m = CDPMain();
+   m.run();
 
 
 
