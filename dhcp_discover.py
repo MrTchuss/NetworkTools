@@ -26,6 +26,7 @@ logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import *
 from getopt import getopt;
 from getopt import GetoptError;
+from threading import Thread
 
  
 class DHCP_discover:
@@ -52,7 +53,7 @@ class DHCP_discover:
    @param values can be either a string or a tuple or an array.
           Tuples and array are reformatted
    """
-   def format(self, ey, values):
+   def format(self, key, values):
       if( type(values) == type(()) or type(values) == type([]) ):
          value = ', '.join([str(x) for x in values]);
       else:
@@ -132,12 +133,21 @@ class DHCP_discover:
          p /= DHCP(options=[("message-type","discover")])
          
          print '[+] Sending packet...'
-         sendp(p, count=3)
+         SendThread(p, count=3).start()
          cap = sniff(lfilter=self.isDHCPResponse, prn=self.dhcp_discover, count=self.count, timeout=self.timeout, store=1);
          if( 0 == len(cap) ):
             print '[!] No response'
       except Exception, e:
          print '[!] %s' % str(e) 
+
+class SendThread(Thread):
+   def __init__(self, p, count):
+      Thread.__init__(self)
+      self.p = p
+      self.count = count
+   def run(self):
+      sendp(self.p, count=self.count)
+
 
 if( '__main__' == __name__ ):
    DHCP_discover().run()
